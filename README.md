@@ -1,6 +1,6 @@
 # Real Estate Lead CRM API
 
-**Live API:** https://YOUR-APP.onrender.com · **Swagger docs:** https://YOUR-APP.onrender.com/docs
+**Live API:** https://realestate-crm-api-b2wa.onrender.com · **Swagger docs:** https://realestate-crm-api-b2wa.onrender.com/docs
 
 > Hosted on Render's free tier: the first request after ~15 minutes of inactivity takes up to a minute while the server wakes up.
 
