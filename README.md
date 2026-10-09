@@ -1,5 +1,9 @@
 # Real Estate Lead CRM API
 
+**Live API:** https://YOUR-APP.onrender.com · **Swagger docs:** https://YOUR-APP.onrender.com/docs
+
+> Hosted on Render's free tier: the first request after ~15 minutes of inactivity takes up to a minute while the server wakes up.
+
 A backend API for real estate companies to manage property listings and customer enquiries (leads). Website visitors submit enquiries, admins assign them to agents, and agents track each lead through a defined sales pipeline so no enquiry gets lost.
 
 Built with **TypeScript, Express, Prisma, PostgreSQL, Zod and JWT**.
@@ -32,7 +36,49 @@ Built with **TypeScript, Express, Prisma, PostgreSQL, Zod and JWT**.
 
 ---
 
-## Design Decisions
+## Data Model
+
+```mermaid
+erDiagram
+    User ||--o{ Lead : "assigned to"
+    Property ||--o{ Lead : "receives"
+
+    User {
+        int id PK
+        string name
+        string email UK
+        string password "bcrypt hash"
+        Role role "admin | agent"
+        datetime createdAt
+    }
+    Property {
+        int id PK
+        string title
+        string city
+        int price "INR"
+        PropertyType type "apartment | villa | plot"
+        PropertyStatus status "available | sold"
+        datetime createdAt
+    }
+    Lead {
+        int id PK
+        string name
+        string phone
+        string message "optional"
+        LeadStatus status "new | contacted | site_visit | closed | lost"
+        int propertyId FK
+        int assignedToId FK "nullable"
+        datetime createdAt
+    }
+```
+
+- A lead **must** belong to a property (`onDelete: Restrict`), so a property with leads cannot be deleted by accident.
+- A lead **may** be assigned to an agent (`onDelete: SetNull`): deleting an agent leaves their leads unassigned instead of deleting them.
+- All enums are real PostgreSQL enums, so invalid values are rejected by the database as well as by the API.
+
+---
+
+## Engineering Decisions & Trade-offs
 
 **Single source of truth for types.** Request types are inferred from Zod schemas with `z.infer`, and database enums (`Role`, `LeadStatus`, etc.) come from the Prisma schema. Adding a new enum value in one place surfaces type errors everywhere it must be handled.
 
@@ -61,6 +107,17 @@ Invalid jumps such as `closed → new` or `new → closed` return `400`. Because
 **Soft delete over hard delete.** A property that has leads cannot be deleted (`409 Conflict`); the response suggests marking it as `sold` instead, preserving lead history.
 
 **Business rules vs shape validation.** Zod validates the shape of input (phone format, enums, limits). Rules that depend on database state, such as "a sold property cannot receive enquiries", are checked in the route.
+
+### Trade-offs I made knowingly
+
+| Decision | Benefit | Cost / when I'd change it |
+|---|---|---|
+| Stateless JWT (7-day expiry) | No session store, no DB lookup per request | A token can't be revoked early; a role change applies only after re-login. Add refresh tokens + short access tokens for production. |
+| Offset pagination (`skip`/`take`) | Simple, supports "page X of Y" | Slows down on very deep pages and can shift if rows are inserted. Switch to cursor pagination for large tables. |
+| Ownership checked in application code | Easy to read and test per route | A new route could forget the check. Postgres Row-Level Security would enforce it at the DB layer. |
+| Hand-written OpenAPI spec | No extra tooling | Can drift from the Zod schemas. Generate it from Zod if the API grows. |
+| Public lead endpoint without rate limiting | Simplest working version | Open to spam. `express-rate-limit` is the first thing I'd add. |
+| Render free tier + Neon | Zero cost, deployed in a day | Cold starts after idle. A paid instance or AWS for real traffic. |
 
 ---
 
@@ -140,6 +197,17 @@ npm run dev
 
 The API runs on `http://localhost:4000`.
 
+Open the interactive docs at `http://localhost:4000/docs`.
+
+### Deployment (Render + Neon)
+
+1. Create a Postgres database on [Neon](https://neon.tech) and copy its connection string (keep `?sslmode=require`).
+2. On [Render](https://render.com), create a **Web Service** from this repo:
+   - **Build command:** `npm install --include=dev && npm run build`
+   - **Start command:** `npm start`
+   - **Environment:** `DATABASE_URL` (from Neon), `JWT_SECRET` (long random string)
+3. `npm start` runs `prisma migrate deploy` before starting the server, so the schema is applied automatically on every deploy.
+
 ### Creating the first admin
 
 For security, there is no endpoint that creates admins. Register a user, then promote them in the database:
@@ -156,8 +224,8 @@ Log in again after promotion to receive a token with the new role.
 |---|---|
 | `npm run dev` | Start with hot reload (`tsx watch`) |
 | `npm run typecheck` | Type-check without emitting files |
-| `npm run build` | Compile to `dist/` |
-| `npm start` | Run the compiled build |
+| `npm run build` | Generate Prisma client and compile to `dist/` |
+| `npm start` | Apply migrations, then run the compiled build |
 
 ---
 
@@ -165,7 +233,9 @@ Log in again after promotion to receive a token with the new role.
 
 ```
 src/
-├── index.ts                  # App setup, routers, 404 and error handlers
+├── index.ts                  # App setup, routers, /docs, 404 and error handlers
+├── docs/
+│   └── openapi.ts            # OpenAPI spec for Swagger UI
 ├── lib/
 │   ├── prisma.ts             # Shared Prisma client
 │   └── env.ts                # Validated environment variables
@@ -196,5 +266,4 @@ prisma/
 - Refresh tokens and token revocation on logout
 - Automated tests (Vitest + Supertest)
 - Docker setup for one-command local development
-- OpenAPI / Swagger documentation
 - Lead activity history (who changed the status and when)
